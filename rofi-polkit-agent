@@ -27,6 +27,12 @@ else
     # from stdin to variable $msg
     while read -r msg; do
         #  --- shellcheck disable=SC2210
+        # Test to see that we can successfully parse the message
+        if ! $(echo "$msg" | jq -e . >/dev/null 2>&1); then
+          # If we can not, remove the message.
+          msg=$(echo "$msg" | sed -rne 's/,\s"message":.*/ \}/gip')
+        fi
+
         if echo "$msg" | jq -e '.action == "request password"' 1>/dev/null 2>/dev/null
         then
             # Parse msg fields
