@@ -39,11 +39,13 @@ else
 
             # Cancel authentication if no password was given,
             # otherwise respond with given password
-            if test -z "$response"
-            then echo '{"action":"cancel"}'
-            else echo "{\"action\":\"authenticate\",\"password\": \"$response\"}"
+            if test -z "$response"; then
+              echo '{"action":"cancel"}'
+              exit 1
+            else
+              echo "{\"action\":\"authenticate\",\"password\": \"$response\"}"
+              exit 0
             fi
         fi
     done
 fi
-
