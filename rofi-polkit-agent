@@ -12,38 +12,62 @@ Start the polkit agent, with any additional argument passed directly to rofi :
 '
 esac
 
+# Drain `stdin` and exit with $1
+terminate () {
+    cat - >/dev/null ; exit "$1"
+}
+
 if test "$1" != '_CALLED_INTERNALLY'; then
 
-    prepParams() { for i in "$@"; do printf "'%s' " "$i"; done }
-    parameters="$(prepParams "$@")"
+    # Handover execution to `cmd-polkit-agent`
+    exec cmd-polkit-agent -s -c "$0 _CALLED_INTERNALLY $*"
 
-    exec cmd-polkit-agent -s -c "$0 _CALLED_INTERNALLY $parameters*"
-    # exec cmd-polkit-agent -s -c 'rofi-polkit-agent _CALLED_INTERNALLY'
-else
-    # Remove $1 (_CALLED_INTERNALLY) from parameter array
+else # Internal call
+
+    # Drop '_CALLED_INTERNALLY' from parameters
     shift 1
 
     # Read incoming messages one by one (line by line)
-    # from stdin to variable $msg
+    # from `stdin` in to $msg 
     while read -r msg; do
-        #  --- shellcheck disable=SC2210
-        if echo "$msg" | jq -e '.action == "request password"' 1>/dev/null 2>/dev/null
-        then
-            # Parse msg fields
-            prompt="$( printf '%s' "$msg" | jq -rc '.prompt // "Password:"')"
-            message="$(printf '%s' "$msg" | jq -rc '.message // "No message given!"')"
 
-            # Request a password prompt from rofi
-            response="$(printf '' | rofi  -dmenu -p "$prompt" \
-                -mesg "$message" -password -no-fixed-num-lines "$@")"
+        # Parse $msg for action field
+        action="$(printf '%s' "$msg" | jq -e '.action')"
 
-            # Cancel authentication if no password was given,
-            # otherwise respond with given password
-            if test -z "$response"
-            then echo '{"action":"cancel"}'
-            else echo "{\"action\":\"authenticate\",\"password\": \"$response\"}"
-            fi
+        # Handle invalid json messages
+        if test "$?" = 4; then
+            terminate 4
         fi
+        
+        case "$action" in
+            '"authorization response"' )
+                # Exit if authorization was successful
+                if printf '%s' "$msg" | jq -e '.authorized' 1>/dev/null 2>/dev/null; then
+                    terminate 0
+                fi
+            ;;
+            '"request password"' )
+                # Parse $msg fields
+                prompt="$( printf '%s' "$msg" | jq -rc '.prompt  // "Password:"')"
+                message="$(printf '%s' "$msg" | jq -rc '.message // "No message given!"')"
+
+                # Request a password prompt from `rofi`
+                response="$(printf '' | rofi  -dmenu -p "$prompt" \
+                    -mesg "$message" -password -format f -no-fixed-num-lines "$@")"
+
+
+                # Check if `rofi` request was successful
+                if test "$?" = 0
+                then
+                    # Send Password response
+                    echo "{\"action\":\"authenticate\",\"password\": \"$response\"}"
+                else
+                    # Send cancel request and exit
+                    echo '{"action":"cancel"}'
+                    terminate 0
+                fi
+            ;;
+        esac
     done
 fi
 
